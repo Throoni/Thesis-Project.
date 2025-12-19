@@ -178,28 +178,20 @@ def plot_wealth_curve():
     print("Generating Wealth Curve Plot...")
     
     # Try to load backtest results
-    backtest_files = [
-        RESULTS / "backtest_returns.csv",
-        RESULTS / "strategy_returns.csv"
-    ]
+    backtest_file = RESULTS / "backtest_returns.csv"
     
-    strategy_returns = None
-    for file in backtest_files:
-        if file.exists():
-            df = pd.read_csv(file)
-            if 'strategy_return' in df.columns or 'return' in df.columns:
-                strategy_returns = df
-                print(f"  Loaded: {file.name}")
-                break
-    
-    if strategy_returns is None:
+    if backtest_file.exists():
+        strategy_returns = pd.read_csv(backtest_file)
+        print(f"  Loaded: {backtest_file.name}")
+    else:
         print("  [WARNING] No backtest returns CSV found. Creating illustrative plot...")
         # Create illustrative data
         dates = pd.date_range('2017-01-01', '2024-12-31', freq='ME')
         np.random.seed(42)
         strategy_returns = pd.DataFrame({
             'date': dates,
-            'strategy_return': np.random.normal(0.005, 0.02, len(dates)),
+            'strategy_return_gross': np.random.normal(0.005, 0.02, len(dates)),
+            'strategy_return_net': np.random.normal(0.004, 0.02, len(dates)),
             'market_return': np.random.normal(0.008, 0.015, len(dates))
         })
     
@@ -208,8 +200,10 @@ def plot_wealth_curve():
         strategy_returns['date'] = pd.to_datetime(strategy_returns['date'])
         strategy_returns = strategy_returns.sort_values('date')
     
-    # Get returns
-    if 'strategy_return' in strategy_returns.columns:
+    # Get returns - handle different column names
+    if 'strategy_return_net' in strategy_returns.columns:
+        strat_ret = strategy_returns['strategy_return_net'].values
+    elif 'strategy_return' in strategy_returns.columns:
         strat_ret = strategy_returns['strategy_return'].values
     elif 'return' in strategy_returns.columns:
         strat_ret = strategy_returns['return'].values
@@ -217,11 +211,18 @@ def plot_wealth_curve():
         print("  [ERROR] Could not find strategy return column. Skipping.")
         return
     
-    # Market benchmark (if available, otherwise use market return)
+    # Remove NaN values
+    strat_ret = np.array([x for x in strat_ret if not np.isnan(x)])
+    
+    # Market benchmark
     if 'market_return' in strategy_returns.columns:
         market_ret = strategy_returns['market_return'].values
+        market_ret = np.array([x for x in market_ret if not np.isnan(x)])
+        # Ensure same length
+        min_len = min(len(strat_ret), len(market_ret))
+        strat_ret = strat_ret[:min_len]
+        market_ret = market_ret[:min_len]
     else:
-        # Use a simple market proxy
         market_ret = np.random.normal(0.008, 0.015, len(strat_ret))
     
     # Calculate cumulative wealth

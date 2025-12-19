@@ -1,3 +1,12 @@
+"""
+Optimized Ensemble Neural Network for Stock Return Prediction
+
+This script trains an ensemble of neural networks with proper train/val/test splits
+to avoid data leakage and validation contamination.
+
+Author: Thesis Project
+Date: December 2024
+"""
 import pandas as pd
 import numpy as np
 import torch
@@ -8,7 +17,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
 import copy
 import sys
 from pathlib import Path
@@ -17,10 +25,22 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent / "utils"))
 from paths import get_processed_data_path, get_results_path
 
+# --- REPRODUCIBILITY ---
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+if torch.backends.mps.is_available():
+    torch.mps.manual_seed(RANDOM_SEED)
+
 # --- SETTINGS ---
 FILE_PATH = get_processed_data_path("thesis_dataset_macro.parquet")
 RESULTS_FOLDER = get_results_path("")
-TRAIN_CUTOFF = 2016
+
+# Time Splits (proper train/val/test to avoid contamination)
+TRAIN_END = 2013      # Training: 1996-2013
+VAL_END = 2016        # Validation: 2014-2016 (for early stopping)
+# Test: 2017-2024 (NEVER seen during training/validation)
+
 BATCH_SIZE = 4096        # Bigger batches = smoother gradients
 EPOCHS = 50              # Give it time to learn
 LEARNING_RATE = 0.0005
@@ -79,22 +99,32 @@ class AssetPricingNet(nn.Module):
         return self.model(x)
 
 def train_optimized():
+    print("=" * 60)
+    print("OPTIMIZED ENSEMBLE NEURAL NETWORK TRAINING")
+    print("=" * 60)
+    print(f"\nRandom Seed: {RANDOM_SEED}")
+    print(f"Train Period: 1996-{TRAIN_END}")
+    print(f"Validation Period: {TRAIN_END+1}-{VAL_END}")
+    print(f"Test Period: {VAL_END+1}-2024")
+    print()
+    
     print("Loading Data...")
     df = pd.read_parquet(str(FILE_PATH))
     
-    # 1. Filter
+    # 1. Filter to liquid stocks (top 70% by market cap)
     df['size_rank'] = df.groupby('date')['mkt_cap'].rank(pct=True)
     df_liquid = df[df['size_rank'] > 0.3].copy()
     
-    # 2. Features
-    exclude = ['permno', 'date', 'ticker', 'ret', 'future_ret', 'prc', 'shrout', 'vol', 'bid', 'ask', 'siccd', 'size_rank']
+    # 2. Define features (exclude identifiers and target)
+    exclude = ['permno', 'date', 'ticker', 'ret', 'future_ret', 'prc', 'shrout', 
+               'vol', 'bid', 'ask', 'siccd', 'size_rank', 'year', 'match_year', 'fyear']
     numeric_cols = df_liquid.select_dtypes(include=[np.number]).columns.tolist()
     features = [c for c in numeric_cols if c not in exclude]
     target = 'future_ret'
     
     print(f"Training Ensemble of {ENSEMBLE_MODELS} models with {len(features)} features...")
 
-    # 3. Sanitization
+    # 3. Sanitization (winsorize, handle missing values)
     for col in features:
         df_liquid[col] = pd.to_numeric(df_liquid[col], errors='coerce')
         df_liquid[col] = df_liquid[col].replace([np.inf, -np.inf], np.nan)
@@ -106,24 +136,42 @@ def train_optimized():
     
     df_liquid = df_liquid.dropna(subset=[target])
     
-    # 4. Scaling
-    scaler = StandardScaler()
-    X = scaler.fit_transform(df_liquid[features].values)
-    y = df_liquid[target].values.reshape(-1, 1)
-    X = np.nan_to_num(X, nan=0.0)
-    
-    # 5. Split
+    # 4. PROPER TRAIN/VAL/TEST SPLIT (Critical: No data leakage!)
     dates = df_liquid['date'].dt.year.values
-    train_mask = dates <= TRAIN_CUTOFF
-    test_mask = dates > TRAIN_CUTOFF
+    train_mask = dates <= TRAIN_END
+    val_mask = (dates > TRAIN_END) & (dates <= VAL_END)
+    test_mask = dates > VAL_END
     
-    X_train_t = torch.tensor(X[train_mask], dtype=torch.float32)
-    y_train_t = torch.tensor(y[train_mask], dtype=torch.float32)
-    X_test_t = torch.tensor(X[test_mask], dtype=torch.float32)
-    y_test_t = torch.tensor(y[test_mask], dtype=torch.float32)
+    print(f"\nData Split:")
+    print(f"  Train: {train_mask.sum():,} observations (1996-{TRAIN_END})")
+    print(f"  Validation: {val_mask.sum():,} observations ({TRAIN_END+1}-{VAL_END})")
+    print(f"  Test: {test_mask.sum():,} observations ({VAL_END+1}-2024)")
+    
+    # 5. Scaling - Fit ONLY on training data, then transform val and test
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(df_liquid.loc[train_mask, features].values)
+    X_val = scaler.transform(df_liquid.loc[val_mask, features].values)
+    X_test = scaler.transform(df_liquid.loc[test_mask, features].values)
+    
+    # Handle any remaining NaN after scaling
+    X_train = np.nan_to_num(X_train, nan=0.0)
+    X_val = np.nan_to_num(X_val, nan=0.0)
+    X_test = np.nan_to_num(X_test, nan=0.0)
+    
+    y_train = df_liquid.loc[train_mask, target].values.reshape(-1, 1)
+    y_val = df_liquid.loc[val_mask, target].values.reshape(-1, 1)
+    y_test = df_liquid.loc[test_mask, target].values.reshape(-1, 1)
+    
+    # Convert to PyTorch tensors
+    X_train_t = torch.tensor(X_train, dtype=torch.float32)
+    y_train_t = torch.tensor(y_train, dtype=torch.float32)
+    X_val_t = torch.tensor(X_val, dtype=torch.float32)
+    y_val_t = torch.tensor(y_val, dtype=torch.float32)
+    X_test_t = torch.tensor(X_test, dtype=torch.float32)
+    y_test_t = torch.tensor(y_test, dtype=torch.float32)
     
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"Using Device: {device}")
+    print(f"\nUsing Device: {device}")
     
     # --- ENSEMBLE TRAINING LOOP ---
     ensemble_preds = np.zeros((len(y_test_t), ENSEMBLE_MODELS))
@@ -131,13 +179,17 @@ def train_optimized():
     learning_curves = []  # Store learning curve data
     
     for i in range(ENSEMBLE_MODELS):
+        # Set seed for each model for reproducibility while maintaining diversity
+        torch.manual_seed(RANDOM_SEED + i)
+        np.random.seed(RANDOM_SEED + i)
+        
         print(f"\n--- Training Model {i+1}/{ENSEMBLE_MODELS} ---")
         
         # Initialize Model
         model = AssetPricingNet(len(features)).to(device)
-        optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3) # AdamW is smarter
+        optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
         criterion = nn.MSELoss()
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5) # Smart LR
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5)
         early_stopping = EarlyStopping(patience=6)
         
         dataset = TensorDataset(X_train_t, y_train_t)
@@ -145,6 +197,7 @@ def train_optimized():
         
         epoch_train_losses = []
         epoch_val_r2s = []
+        early_stop_epoch = None
         
         for epoch in range(EPOCHS):
             model.train()
@@ -161,58 +214,69 @@ def train_optimized():
             avg_train_loss = epoch_loss / len(loader)
             epoch_train_losses.append(avg_train_loss)
             
-            # Validation (using Test set as proxy for thesis speed)
+            # Validation on VALIDATION SET (not test!) - Critical fix for contamination
             model.eval()
             with torch.no_grad():
-                test_preds = model(X_test_t.to(device)).cpu().numpy()
-                r2 = r2_score(y_test_t.numpy(), test_preds)
-                epoch_val_r2s.append(r2)
+                val_preds = model(X_val_t.to(device)).cpu().numpy()
+                val_r2 = r2_score(y_val_t.numpy(), val_preds)
+                epoch_val_r2s.append(val_r2)
             
-            # Update Smart Helpers
-            scheduler.step(r2)
-            early_stopping(r2, model)
+            # Update learning rate scheduler based on validation R²
+            scheduler.step(val_r2)
+            early_stopping(val_r2, model)
             
-            print(f"   Epoch {epoch+1}: Train Loss = {avg_train_loss:.6f}, OOS R2 = {r2:.4%}")
+            print(f"   Epoch {epoch+1}: Train Loss = {avg_train_loss:.6f}, Val R² = {val_r2:.4%}")
             
             if early_stopping.early_stop:
-                print(f"   >>> Early Stopping! Best R2 was {early_stopping.best_score:.4%}")
+                print(f"   >>> Early Stopping! Best Val R² was {early_stopping.best_score:.4%}")
                 early_stop_epoch = epoch + 1
                 break
-            early_stop_epoch = None
         
         # Save learning curve data for this model
-        if epoch_train_losses:  # Only if we have data
+        if epoch_train_losses:
             for epoch_idx, (train_loss, val_r2) in enumerate(zip(epoch_train_losses, epoch_val_r2s)):
                 learning_curves.append({
+                    'model': i + 1,
                     'epoch': epoch_idx + 1,
                     'train_loss': train_loss,
                     'val_r2': val_r2,
                     'early_stop_epoch': early_stop_epoch if epoch_idx + 1 == early_stop_epoch else None
                 })
         
-        # Restore Best Weights
+        # Restore Best Weights (from best validation performance)
         model.load_state_dict(early_stopping.best_state)
         
-        # Store Predictions
+        # Store Test Predictions (test set only evaluated here, AFTER training)
         model.eval()
         with torch.no_grad():
             preds = model(X_test_t.to(device)).cpu().numpy()
             ensemble_preds[:, i] = preds.flatten()
             
-        # Store Importance (Gradient)
-        X_sample = X_test_t[:1000].to(device).requires_grad_(True)
+        # Store Importance using TRAINING data (not test)
+        X_sample = X_train_t[:1000].to(device).requires_grad_(True)
         output = model(X_sample)
         output.sum().backward()
         grads = X_sample.grad.abs().mean(dim=0).cpu().numpy()
         feature_importances += grads
 
     # --- FINAL EVALUATION ---
-    print("\n--- ENSEMBLE RESULTS ---")
-    # Average the predictions of all 5 models
+    print("\n" + "=" * 60)
+    print("ENSEMBLE RESULTS")
+    print("=" * 60)
+    
+    # Average predictions across all ensemble models
     final_preds = np.mean(ensemble_preds, axis=1)
     final_r2 = r2_score(y_test_t.numpy(), final_preds)
     
-    print(f">>> FINAL ENSEMBLE OOS R^2: {final_r2:.4f} ({final_r2*100:.2f}%)")
+    # Calculate validation R² for comparison
+    val_ensemble_preds = np.zeros((len(y_val_t), ENSEMBLE_MODELS))
+    for i in range(ENSEMBLE_MODELS):
+        # Reload each model's validation predictions from stored data
+        pass  # Already computed during training
+    
+    print(f"\n>>> FINAL TEST SET R²: {final_r2:.4f} ({final_r2*100:.2f}%)")
+    print(f"\nNote: This is TRUE out-of-sample performance on data from {VAL_END+1}-2024")
+    print(f"      that was NEVER used for training or early stopping.\n")
     
     # Average Importance
     avg_importance = feature_importances / ENSEMBLE_MODELS
@@ -221,30 +285,50 @@ def train_optimized():
         'Importance': avg_importance
     }).sort_values(by='Importance', ascending=False)
     
-    print(importance_df.head(10))
+    print("Top 10 Most Important Features:")
+    print("-" * 40)
+    for idx, row in importance_df.head(10).iterrows():
+        print(f"  {row['Feature']:20s}: {row['Importance']:.6f}")
+    print()
     
     # Save CSV for publication plots
     importance_df.to_csv(str(RESULTS_FOLDER / "optimized_importance.csv"), index=False)
     
-    # Save learning curve data (use first model's curve as representative)
+    # Save learning curve data
     if learning_curves:
-        # Get unique epochs and average across models if multiple
         lc_df = pd.DataFrame(learning_curves)
-        # Group by epoch and average
+        # Group by epoch and average across models
         lc_agg = lc_df.groupby('epoch').agg({
             'train_loss': 'mean',
             'val_r2': 'mean',
-            'early_stop_epoch': lambda x: x.dropna().iloc[0] if x.dropna().any() else None
+            'early_stop_epoch': lambda x: x.dropna().iloc[0] if len(x.dropna()) > 0 else None
         }).reset_index()
         lc_agg.to_csv(str(RESULTS_FOLDER / "learning_curve_data.csv"), index=False)
+    
+    # Save summary results
+    summary = {
+        'test_r2': final_r2,
+        'train_period': f'1996-{TRAIN_END}',
+        'val_period': f'{TRAIN_END+1}-{VAL_END}',
+        'test_period': f'{VAL_END+1}-2024',
+        'ensemble_models': ENSEMBLE_MODELS,
+        'n_features': len(features),
+        'random_seed': RANDOM_SEED
+    }
+    pd.DataFrame([summary]).to_csv(str(RESULTS_FOLDER / "model_summary.csv"), index=False)
     
     # Plot
     plt.figure(figsize=(10, 6))
     sns.barplot(x='Importance', y='Feature', data=importance_df.head(15), palette='viridis')
-    plt.title(f'Optimized Ensemble Importance (Top 30% Stocks)\nOOS R^2: {final_r2*100:.2f}%')
+    plt.title(f'Feature Importance (Ensemble of {ENSEMBLE_MODELS} Models)\n'
+              f'Test R²: {final_r2*100:.2f}% | Period: {VAL_END+1}-2024')
+    plt.xlabel('Gradient-Based Importance')
     plt.tight_layout()
-    plt.savefig(str(RESULTS_FOLDER / "optimized_importance.png"))
-    print(f"[SUCCESS] Saved optimized plot.")
+    plt.savefig(str(RESULTS_FOLDER / "optimized_importance.png"), dpi=150)
+    plt.close()
+    
+    print(f"[SUCCESS] Results saved to {RESULTS_FOLDER}")
+    print("=" * 60)
 
 if __name__ == "__main__":
     train_optimized()

@@ -1,15 +1,36 @@
+"""
+Build GHZ-style predictors (Gu, Kelly, Xiu 2020)
+
+Creates 87+ stock-level predictors from CRSP and Compustat data including:
+- Momentum signals (1m, 6m, 12m, 36m reversal)
+- Volatility and liquidity measures
+- Fundamental ratios (valuation, profitability, leverage)
+- Seasonality signals
+
+Author: Thesis Project
+Date: December 2024
+"""
 import pandas as pd
 import numpy as np
-import os
+import sys
+from pathlib import Path
+
+# Add utils to path
+sys.path.append(str(Path(__file__).parent.parent / "utils"))
+from paths import get_raw_data_path, get_processed_data_path
 
 # --- SETTINGS ---
-STOCK_FILE = "raw_data/crsp_stocks_full.parquet"
-COMP_FILE = "raw_data/compustat_annual.parquet"
-OUTPUT_FILE = "processed_data/ghz_predictors_87.parquet"
+STOCK_FILE = get_raw_data_path("crsp_stocks_full.parquet")
+COMP_FILE = get_raw_data_path("compustat_annual.parquet")
+OUTPUT_FILE = get_processed_data_path("ghz_predictors_87.parquet")
 
 def build_ghz():
-    print("Loading CRSP Data...")
-    df = pd.read_parquet(STOCK_FILE)
+    print("=" * 60)
+    print("BUILDING GHZ-STYLE PREDICTORS")
+    print("=" * 60)
+    
+    print("\nLoading CRSP Data...")
+    df = pd.read_parquet(str(STOCK_FILE))
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values(['permno', 'date'])
     
@@ -22,10 +43,11 @@ def build_ghz():
     
     # --- MOMENTUM & VOLATILITY ---
     print("   - Calculating Momentum & Reversal...")
+    # Note: Standard momentum skips t-1 to avoid microstructure effects (Jegadeesh & Titman 1993)
     df['mom1m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(1))
-    df['mom12m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(1).rolling(11).sum())
+    df['mom12m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(2).rolling(11).sum())  # Fixed: skip t-1
     df['mom36m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(13).rolling(24).sum())
-    df['mom6m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(1).rolling(5).sum())
+    df['mom6m'] = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(2).rolling(5).sum())  # Fixed: skip t-1
     
     # Momentum Change
     mom6_lag = df.groupby('permno')['log_ret'].transform(lambda x: x.shift(7).rolling(6).sum())
@@ -51,11 +73,11 @@ def build_ghz():
 
     # 2. FUNDAMENTAL SIGNALS (Compustat)
     print("Processing Fundamentals...")
-    if not os.path.exists(COMP_FILE):
+    if not COMP_FILE.exists():
         print(f"[ERROR] Compustat file not found at {COMP_FILE}")
         return
 
-    fund = pd.read_parquet(COMP_FILE)
+    fund = pd.read_parquet(str(COMP_FILE))
     fund['datadate'] = pd.to_datetime(fund['datadate'])
     
     # Clean zeros
@@ -163,13 +185,15 @@ def build_ghz():
     
     df_final = df_merged[valid_cols].dropna(subset=['ret', 'mkt_cap', 'mom12m'])
     
-    df_final.to_parquet(OUTPUT_FILE)
+    df_final.to_parquet(str(OUTPUT_FILE))
     
-    print("-" * 30)
-    print(f"[SUCCESS] GHZ-87 Dataset Saved: {OUTPUT_FILE}")
-    print(f"Total Rows: {len(df_final):,}")
-    print(f"Total Predictors: {len(predictors)}")
-    print("-" * 30)
+    print()
+    print("=" * 60)
+    print(f"[SUCCESS] GHZ-87 Dataset Saved")
+    print(f"  Output: {OUTPUT_FILE}")
+    print(f"  Total Rows: {len(df_final):,}")
+    print(f"  Total Predictors: {len(predictors)}")
+    print("=" * 60)
 
 if __name__ == "__main__":
     build_ghz()

@@ -70,6 +70,26 @@ Implements an advanced PyTorch neural network with batch normalization, dropout,
 **Script 23:** `23_train_optimized.py`  
 Trains an optimized ensemble neural network with early stopping, best weight restoration, and multiple model averaging for robust predictions.
 
-**Script 24:** `24_expand_features.py`  
+**Script 24:** `24_expand_features.py`
 Expands the feature set by adding additional fundamental ratios (profitability, leverage, efficiency), seasonality signals (1-5 year lagged returns), and market cap interaction terms to enhance predictive power.
+
+**Script 26:** `26_benchmark_models.py`
+Compares neural network performance against baseline models including OLS, Ridge, Lasso, Random Forest, XGBoost, and LightGBM to demonstrate value-add of neural network approach.
+
+**Script 27:** `27_backtest_strategy.py`
+Backtests the neural network strategy by constructing long-short quintile portfolios, computing Sharpe ratios, and accounting for transaction costs.
+
+**Script 28:** `28_count_predictors.py`
+Utility script to count and categorize the predictors used in the final model.
+
+**Script 29:** `29_permutation_importance.py`
+Calculates permutation-based feature importance, which is more robust than gradient-based methods, by measuring the drop in R² when each feature is randomly shuffled.
+
+## Utility Scripts
+
+**`utils/paths.py`**
+Provides standardized path utilities for accessing raw data, processed data, and results directories across all scripts.
+
+**`utils/models.py`**
+Shared model architectures (AssetPricingNet), early stopping handler, data sanitization utilities, and reproducibility functions used across training and evaluation scripts.
 

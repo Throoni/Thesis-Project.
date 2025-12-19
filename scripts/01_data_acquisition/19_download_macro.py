@@ -1,9 +1,25 @@
+"""
+Download Macroeconomic Variables from FRED
+
+Downloads key predictors from Welch & Goyal (2008):
+- VIX: Volatility index
+- CPI/Inflation: Consumer Price Index
+- Term Spread: 10y - 2y Treasury
+- Default Spread: Corporate - Treasury
+- Risk-Free Rate: 3-month T-Bill
+- Consumer Sentiment: University of Michigan
+
+Author: Thesis Project
+Date: December 2024
+"""
 import pandas_datareader.data as web
 import pandas as pd
-import os
+import sys
+from pathlib import Path
 
-DATA_FOLDER = "raw_data"
-OUTPUT_FOLDER = "processed_data"
+# Add utils to path
+sys.path.append(str(Path(__file__).parent.parent / "utils"))
+from paths import get_processed_data_path
 
 def download_macro():
     print("Downloading Macro Data from FRED...")
@@ -39,9 +55,10 @@ def download_macro():
         df_monthly = df_monthly.ffill()
         
         # Save
-        save_path = os.path.join(OUTPUT_FOLDER, "macro_predictors.parquet")
-        df_monthly.to_parquet(save_path)
+        save_path = get_processed_data_path("macro_predictors.parquet")
+        df_monthly.to_parquet(str(save_path))
         print(f"[SUCCESS] Macro Data Saved: {len(df_monthly)} months.")
+        print(f"  Output: {save_path}")
         print(df_monthly.tail())
         
     except Exception as e:
