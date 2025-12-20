@@ -68,15 +68,18 @@ Trains a neural network model incorporating macroeconomic variables and evaluate
 Implements an advanced PyTorch neural network with batch normalization, dropout, and enhanced training procedures.
 
 **Script 23:** `23_train_optimized.py`  
-Trains an optimized ensemble neural network with early stopping, best weight restoration, and multiple model averaging for robust predictions.
+Trains an optimized ensemble neural network with early stopping, best weight restoration, gradient clipping, warmup + cosine annealing learning rate schedule, and multiple model averaging for robust predictions.
 
-**Script 24:** `24_expand_features.py`
+**Script 24:** `24_expand_features.py`  
 Expands the feature set by adding additional fundamental ratios (profitability, leverage, efficiency), seasonality signals (1-5 year lagged returns), and market cap interaction terms to enhance predictive power.
 
 **Script 26:** `26_benchmark_models.py`
 Compares neural network performance against baseline models including OLS, Ridge, Lasso, Random Forest, XGBoost, and LightGBM to demonstrate value-add of neural network approach.
 
-**Script 27:** `27_backtest_strategy.py`
+**Script 27 (Modeling):** `27_train_advanced.py`
+Advanced neural network training script with comprehensive features including gradient clipping, mixed precision training, custom loss functions (MSE, Huber, IC), gradient accumulation, learning rate warmup, and configurable training presets via CLI.
+
+**Script 27 (Evaluation):** `27_backtest_strategy.py`
 Backtests the neural network strategy by constructing long-short quintile portfolios, computing Sharpe ratios, and accounting for transaction costs.
 
 **Script 28:** `28_count_predictors.py`
@@ -85,11 +88,49 @@ Utility script to count and categorize the predictors used in the final model.
 **Script 29:** `29_permutation_importance.py`
 Calculates permutation-based feature importance, which is more robust than gradient-based methods, by measuring the drop in R² when each feature is randomly shuffled.
 
+**Script 30:** `30_shap_analysis.py`
+Computes SHAP (SHapley Additive exPlanations) values for neural network interpretability. Generates global feature importance, local prediction explanations, and comparison with gradient-based importance.
+
+**Script 25:** `25_hyperparameter_tuning.py`
+Uses Optuna for hyperparameter optimization. Tunes learning rate, batch size, hidden dimensions, dropout rates, and activation functions using Tree-structured Parzen Estimator (TPE) with median pruning.
+
+**Script: `test_training_pipeline.py`**
+Quick validation script that runs smoke tests on all training pipeline components including imports, configuration presets, loss functions, model architecture, and training utilities.
+
 ## Utility Scripts
 
 **`utils/paths.py`**
 Provides standardized path utilities for accessing raw data, processed data, and results directories across all scripts.
 
 **`utils/models.py`**
-Shared model architectures (AssetPricingNet), early stopping handler, data sanitization utilities, and reproducibility functions used across training and evaluation scripts.
+Shared model architectures (AssetPricingNet), early stopping handler, data sanitization utilities, gradient clipping, warmup cosine scheduler, and reproducibility functions used across training and evaluation scripts.
+
+**`utils/losses.py`**
+Custom loss functions for financial machine learning including:
+- **HuberLoss**: Robust to outliers in financial returns (fat tails)
+- **QuantileLoss**: Predict return distributions, not just means
+- **AsymmetricLoss**: Different penalties for over/under-prediction
+- **SharpeLoss**: Directly optimize risk-adjusted returns (Sharpe ratio)
+- **ICLoss**: Optimize Information Coefficient (rank correlation)
+- **RankMSELoss**: Weight MSE by prediction rank (focus on extreme predictions)
+
+**`utils/training.py`**
+Comprehensive training utilities including:
+- **GradientClipper**: Track and clip gradients with statistics
+- **WarmupCosineScheduler**: Linear warmup + cosine annealing
+- **MixedPrecisionTrainer**: FP16 training for CUDA devices
+- **EarlyStopping**: Stop training with best weight restoration
+- **ModelCheckpoint**: Save/load model states during training
+- **TrainingLogger**: Log metrics to CSV and TensorBoard
+- **TrainingConfig**: Dataclass for training configuration
+
+**`utils/training_config.py`**
+Configuration management with presets:
+- **default**: Balanced configuration for most use cases
+- **fast**: Quick experiments with fewer epochs and models
+- **robust**: More regularization and longer training
+- **huber**: Uses Huber loss for robustness to outliers
+- **ic_optimized**: Optimized for Information Coefficient
+- **mixed_precision**: FP16 training (CUDA only)
+- **large_batch**: Large effective batch size via gradient accumulation
 

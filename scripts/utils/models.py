@@ -192,3 +192,109 @@ def create_time_splits(df, train_end=2013, val_end=2016):
     
     return train_mask, val_mask, test_mask
 
+
+# --- TRAINING UTILITIES ---
+
+def clip_gradients(model: nn.Module, max_norm: float = 1.0) -> float:
+    """
+    Clip gradients to prevent exploding gradients.
+    
+    Args:
+        model: PyTorch model
+        max_norm: Maximum gradient norm
+    
+    Returns:
+        Total gradient norm before clipping
+    """
+    return torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
+
+class WarmupCosineScheduler:
+    """
+    Learning rate scheduler with linear warmup followed by cosine annealing.
+    
+    Args:
+        optimizer: PyTorch optimizer
+        warmup_epochs: Number of warmup epochs
+        total_epochs: Total training epochs
+        min_lr: Minimum learning rate
+    """
+    def __init__(self, optimizer, warmup_epochs: int, total_epochs: int, 
+                 min_lr: float = 1e-7):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        self.min_lr = min_lr
+        self.base_lrs = [group['lr'] for group in optimizer.param_groups]
+        self.current_epoch = 0
+    
+    def step(self):
+        """Update learning rate for next epoch."""
+        self.current_epoch += 1
+        if self.current_epoch <= self.warmup_epochs:
+            # Linear warmup
+            factor = self.current_epoch / self.warmup_epochs
+        else:
+            # Cosine annealing
+            progress = (self.current_epoch - self.warmup_epochs) / (
+                self.total_epochs - self.warmup_epochs
+            )
+            factor = 0.5 * (1 + np.cos(np.pi * progress))
+        
+        for param_group, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+            param_group['lr'] = max(self.min_lr, base_lr * factor)
+    
+    def get_lr(self) -> list:
+        """Get current learning rates."""
+        return [group['lr'] for group in self.optimizer.param_groups]
+
+
+def compute_gradient_stats(model: nn.Module) -> dict:
+    """
+    Compute statistics about gradients.
+    
+    Args:
+        model: PyTorch model with gradients computed
+    
+    Returns:
+        Dictionary with gradient statistics
+    """
+    total_norm = 0.0
+    param_count = 0
+    max_grad = 0.0
+    
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2).item()
+            total_norm += param_norm ** 2
+            param_count += 1
+            max_grad = max(max_grad, p.grad.data.abs().max().item())
+    
+    total_norm = total_norm ** 0.5
+    
+    return {
+        'total_norm': total_norm,
+        'mean_norm': total_norm / max(param_count, 1),
+        'max_grad': max_grad,
+        'param_count': param_count
+    }
+
+
+def count_parameters(model: nn.Module) -> dict:
+    """
+    Count model parameters.
+    
+    Args:
+        model: PyTorch model
+    
+    Returns:
+        Dictionary with parameter counts
+    """
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    
+    return {
+        'total': total,
+        'trainable': trainable,
+        'frozen': total - trainable
+    }

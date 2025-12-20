@@ -80,6 +80,16 @@ AssetPricingNet
 | Ensemble Size | 5 models |
 | Random Seed | 42 |
 
+### Advanced Training Features
+
+| Feature | Value | Purpose |
+|---------|-------|---------|
+| Gradient Clipping | max_norm=1.0 | Prevent exploding gradients |
+| LR Schedule | Warmup + Cosine | Stable training, smooth convergence |
+| Warmup Epochs | 5 | Linear warmup at start |
+| Loss Function | MSE (or Huber) | Configurable loss |
+| Early Stopping | patience=6 | Prevent overfitting |
+
 ### Data Splits (PROPER - No Contamination)
 
 | Split | Period | Purpose |
@@ -159,11 +169,17 @@ While R² may appear modest, for monthly stock returns:
 5. ✅ Transaction costs in backtest
 6. ✅ Standardized paths across scripts
 7. ✅ Improved documentation
+8. ✅ Gradient clipping for training stability
+9. ✅ Warmup + cosine annealing LR schedule
+10. ✅ Custom loss functions (Huber, IC, Sharpe)
+11. ✅ Advanced training utilities (checkpointing, logging)
+12. ✅ Configuration presets for different training strategies
 
 ### Remaining Items
-- [ ] Permutation importance (more robust than gradients)
-- [ ] Consolidate duplicate model code
-- [ ] Add unit tests for critical functions
+- ✅ Permutation importance (more robust than gradients)
+- ✅ Consolidate duplicate model code (moved to utils/models.py)
+- [ ] Add unit tests for critical functions (optional)
+- [ ] Hyperparameter tuning with Optuna (optional)
 
 ---
 
@@ -175,14 +191,19 @@ While R² may appear modest, for monthly stock returns:
 - ✅ Model development with proper methodology
 - ✅ Out-of-sample evaluation
 - ✅ Backtest with transaction costs
-- ✅ Feature importance analysis
+- ✅ Feature importance analysis (gradient + permutation)
 - ✅ Results documentation
+- ✅ Advanced PyTorch training pipeline
+- ✅ Custom loss functions for financial ML
+- ✅ Configurable training presets
+- ✅ Benchmark model comparison
 
 ### Deliverables
 - Clean, reproducible codebase in `scripts/`
 - Processed dataset in `processed_data/`
 - Results and visualizations in `results/`
 - Comprehensive methodology documentation
+- Modular training utilities in `scripts/utils/`
 
 ---
 

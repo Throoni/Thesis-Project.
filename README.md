@@ -70,29 +70,29 @@ Thesis_Project/
 ## Running the Pipeline
 
 ### Step 1: Data Acquisition
-```bash
-python scripts/01_data_acquisition/03_download_crsp.py
-python scripts/01_data_acquisition/05_download_compustat.py
+   ```bash
+   python scripts/01_data_acquisition/03_download_crsp.py
+   python scripts/01_data_acquisition/05_download_compustat.py
 python scripts/01_data_acquisition/11_download_crsp_daily.py
-python scripts/01_data_acquisition/19_download_macro.py
+   python scripts/01_data_acquisition/19_download_macro.py
 ```
-
+   
 ### Step 2: Feature Engineering
 ```bash
-python scripts/02_feature_engineering/26_build_ghz_predictors.py
-python scripts/02_feature_engineering/20_merge_macro.py
+   python scripts/02_feature_engineering/26_build_ghz_predictors.py
+   python scripts/02_feature_engineering/20_merge_macro.py
 ```
-
+   
 ### Step 3: Model Training
 ```bash
-python scripts/03_modeling/23_train_optimized.py
+   python scripts/03_modeling/23_train_optimized.py
 ```
-
+   
 ### Step 4: Evaluation
 ```bash
 python scripts/04_evaluation/27_backtest_strategy.py
-python scripts/04_evaluation/generate_publication_plots.py
-```
+   python scripts/04_evaluation/generate_publication_plots.py
+   ```
 
 ## Key Findings
 
@@ -125,6 +125,69 @@ Neural Network (x5 Ensemble)
 ├── Dense(16) + BN + SiLU + Dropout(0.2)
 └── Dense(1) → Output
 ```
+
+### Advanced Training Features
+
+The project implements state-of-the-art PyTorch training techniques:
+
+| Feature | Description | Script |
+|---------|-------------|--------|
+| **Gradient Clipping** | Prevents exploding gradients (max norm = 1.0) | `23_train_optimized.py` |
+| **LR Warmup** | Linear warmup + cosine annealing schedule | `23_train_optimized.py` |
+| **Custom Loss Functions** | MSE, Huber, IC (Information Coefficient) | `utils/losses.py` |
+| **Gradient Accumulation** | Effective larger batch sizes | `27_train_advanced.py` |
+| **Mixed Precision** | FP16 training for CUDA devices | `27_train_advanced.py` |
+| **Model Checkpointing** | Save/restore best weights | `utils/training.py` |
+| **Configuration Presets** | Fast, robust, IC-optimized, etc. | `utils/training_config.py` |
+
+#### Custom Loss Functions
+
+```python
+# Available loss functions in scripts/utils/losses.py
+- MSE Loss        # Standard mean squared error
+- Huber Loss      # Robust to outliers (financial returns have fat tails)
+- IC Loss         # Directly optimize Information Coefficient (rank correlation)
+- Asymmetric Loss # Different penalties for over/under-prediction
+- Sharpe Loss     # Optimize risk-adjusted returns directly
+```
+
+#### Training Configuration Presets
+
+```bash
+# Run with different presets
+python scripts/03_modeling/27_train_advanced.py --preset fast      # Quick experiments
+python scripts/03_modeling/27_train_advanced.py --preset robust    # More regularization
+python scripts/03_modeling/27_train_advanced.py --preset huber     # Outlier-robust loss
+python scripts/03_modeling/27_train_advanced.py --preset ic_optimized  # Optimize IC
+```
+
+### Interpretability: SHAP Analysis
+
+The project uses SHAP (SHapley Additive exPlanations) for model interpretability:
+
+```bash
+# Run SHAP analysis
+python scripts/04_evaluation/30_shap_analysis.py
+```
+
+Generates:
+- Global feature importance rankings
+- Local prediction explanations (waterfall plots)
+- Comparison with gradient-based importance
+
+### Hyperparameter Tuning
+
+Optuna-based hyperparameter optimization:
+
+```bash
+# Run hyperparameter tuning (50 trials)
+python scripts/03_modeling/25_hyperparameter_tuning.py
+```
+
+Tunes:
+- Learning rate, batch size, weight decay
+- Hidden layer dimensions and dropout rates
+- Activation functions (SiLU, ReLU, GELU)
 
 ## Results
 

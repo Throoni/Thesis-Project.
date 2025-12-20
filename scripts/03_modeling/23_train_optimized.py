@@ -4,6 +4,12 @@ Optimized Ensemble Neural Network for Stock Return Prediction
 This script trains an ensemble of neural networks with proper train/val/test splits
 to avoid data leakage and validation contamination.
 
+Advanced features:
+- Gradient clipping for training stability
+- Warmup + cosine annealing learning rate schedule
+- Configurable loss functions (MSE, Huber)
+- Proper temporal train/val/test splits
+
 Author: Thesis Project
 Date: December 2024
 """
@@ -46,6 +52,13 @@ EPOCHS = 50              # Give it time to learn
 LEARNING_RATE = 0.0005
 ENSEMBLE_MODELS = 5      # Train 5 distinct models and average them (Wisdom of Crowds)
 
+# --- ADVANCED TRAINING OPTIONS ---
+GRADIENT_CLIP_NORM = 1.0       # Gradient clipping for stability (None to disable)
+USE_WARMUP_SCHEDULER = True    # Use warmup + cosine annealing
+WARMUP_EPOCHS = 5              # Epochs for linear warmup
+LOSS_FUNCTION = 'mse'          # 'mse' or 'huber'
+HUBER_DELTA = 1.0              # Delta for Huber loss
+
 RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # --- SMART COMPONENTS ---
@@ -73,6 +86,36 @@ class EarlyStopping:
             self.best_state = copy.deepcopy(model.state_dict())
             self.counter = 0
 
+
+class WarmupCosineScheduler:
+    """Learning rate scheduler with linear warmup followed by cosine annealing."""
+    def __init__(self, optimizer, warmup_epochs, total_epochs, min_lr=1e-7):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        self.min_lr = min_lr
+        self.base_lrs = [group['lr'] for group in optimizer.param_groups]
+        self.current_epoch = 0
+    
+    def step(self):
+        self.current_epoch += 1
+        if self.current_epoch <= self.warmup_epochs:
+            # Linear warmup
+            factor = self.current_epoch / self.warmup_epochs
+        else:
+            # Cosine annealing
+            progress = (self.current_epoch - self.warmup_epochs) / (
+                self.total_epochs - self.warmup_epochs
+            )
+            factor = 0.5 * (1 + np.cos(np.pi * progress))
+        
+        for param_group, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+            param_group['lr'] = max(self.min_lr, base_lr * factor)
+    
+    def get_lr(self):
+        return [group['lr'] for group in self.optimizer.param_groups]
+
+
 class AssetPricingNet(nn.Module):
     def __init__(self, input_dim):
         super(AssetPricingNet, self).__init__()
@@ -98,6 +141,15 @@ class AssetPricingNet(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
+def get_loss_function():
+    """Get loss function based on configuration."""
+    if LOSS_FUNCTION.lower() == 'huber':
+        return nn.HuberLoss(delta=HUBER_DELTA)
+    else:
+        return nn.MSELoss()
+
+
 def train_optimized():
     print("=" * 60)
     print("OPTIMIZED ENSEMBLE NEURAL NETWORK TRAINING")
@@ -106,6 +158,12 @@ def train_optimized():
     print(f"Train Period: 1996-{TRAIN_END}")
     print(f"Validation Period: {TRAIN_END+1}-{VAL_END}")
     print(f"Test Period: {VAL_END+1}-2024")
+    
+    # Print advanced settings
+    print(f"\nAdvanced Settings:")
+    print(f"  Gradient Clipping: {GRADIENT_CLIP_NORM if GRADIENT_CLIP_NORM else 'Disabled'}")
+    print(f"  LR Schedule: {'Warmup + Cosine' if USE_WARMUP_SCHEDULER else 'ReduceOnPlateau'}")
+    print(f"  Loss Function: {LOSS_FUNCTION.upper()}")
     print()
     
     print("Loading Data...")
@@ -188,8 +246,14 @@ def train_optimized():
         # Initialize Model
         model = AssetPricingNet(len(features)).to(device)
         optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
-        criterion = nn.MSELoss()
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5)
+        criterion = get_loss_function()
+        
+        # Learning rate scheduler
+        if USE_WARMUP_SCHEDULER:
+            scheduler = WarmupCosineScheduler(optimizer, WARMUP_EPOCHS, EPOCHS)
+        else:
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=2, factor=0.5)
+        
         early_stopping = EarlyStopping(patience=6)
         
         dataset = TensorDataset(X_train_t, y_train_t)
@@ -197,17 +261,24 @@ def train_optimized():
         
         epoch_train_losses = []
         epoch_val_r2s = []
+        epoch_lrs = []
         early_stop_epoch = None
         
         for epoch in range(EPOCHS):
             model.train()
             epoch_loss = 0.0
+            
             for batch_X, batch_y in loader:
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 optimizer.zero_grad()
                 outputs = model(batch_X)
                 loss = criterion(outputs, batch_y)
                 loss.backward()
+                
+                # Gradient clipping for stability
+                if GRADIENT_CLIP_NORM:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_NORM)
+                
                 optimizer.step()
                 epoch_loss += loss.item()
             
@@ -221,11 +292,18 @@ def train_optimized():
                 val_r2 = r2_score(y_val_t.numpy(), val_preds)
                 epoch_val_r2s.append(val_r2)
             
-            # Update learning rate scheduler based on validation R²
-            scheduler.step(val_r2)
+            # Update learning rate scheduler
+            if USE_WARMUP_SCHEDULER:
+                scheduler.step()
+                current_lr = scheduler.get_lr()[0]
+            else:
+                scheduler.step(val_r2)
+                current_lr = optimizer.param_groups[0]['lr']
+            
+            epoch_lrs.append(current_lr)
             early_stopping(val_r2, model)
             
-            print(f"   Epoch {epoch+1}: Train Loss = {avg_train_loss:.6f}, Val R² = {val_r2:.4%}")
+            print(f"   Epoch {epoch+1}: Loss={avg_train_loss:.6f}, Val R²={val_r2:.4%}, LR={current_lr:.2e}")
             
             if early_stopping.early_stop:
                 print(f"   >>> Early Stopping! Best Val R² was {early_stopping.best_score:.4%}")
@@ -234,12 +312,15 @@ def train_optimized():
         
         # Save learning curve data for this model
         if epoch_train_losses:
-            for epoch_idx, (train_loss, val_r2) in enumerate(zip(epoch_train_losses, epoch_val_r2s)):
+            for epoch_idx, (train_loss, val_r2, lr) in enumerate(
+                zip(epoch_train_losses, epoch_val_r2s, epoch_lrs)
+            ):
                 learning_curves.append({
                     'model': i + 1,
                     'epoch': epoch_idx + 1,
                     'train_loss': train_loss,
                     'val_r2': val_r2,
+                    'learning_rate': lr,
                     'early_stop_epoch': early_stop_epoch if epoch_idx + 1 == early_stop_epoch else None
                 })
         
@@ -268,12 +349,6 @@ def train_optimized():
     final_preds = np.mean(ensemble_preds, axis=1)
     final_r2 = r2_score(y_test_t.numpy(), final_preds)
     
-    # Calculate validation R² for comparison
-    val_ensemble_preds = np.zeros((len(y_val_t), ENSEMBLE_MODELS))
-    for i in range(ENSEMBLE_MODELS):
-        # Reload each model's validation predictions from stored data
-        pass  # Already computed during training
-    
     print(f"\n>>> FINAL TEST SET R²: {final_r2:.4f} ({final_r2*100:.2f}%)")
     print(f"\nNote: This is TRUE out-of-sample performance on data from {VAL_END+1}-2024")
     print(f"      that was NEVER used for training or early stopping.\n")
@@ -301,6 +376,7 @@ def train_optimized():
         lc_agg = lc_df.groupby('epoch').agg({
             'train_loss': 'mean',
             'val_r2': 'mean',
+            'learning_rate': 'mean',
             'early_stop_epoch': lambda x: x.dropna().iloc[0] if len(x.dropna()) > 0 else None
         }).reset_index()
         lc_agg.to_csv(str(RESULTS_FOLDER / "learning_curve_data.csv"), index=False)
@@ -313,7 +389,10 @@ def train_optimized():
         'test_period': f'{VAL_END+1}-2024',
         'ensemble_models': ENSEMBLE_MODELS,
         'n_features': len(features),
-        'random_seed': RANDOM_SEED
+        'random_seed': RANDOM_SEED,
+        'gradient_clip_norm': GRADIENT_CLIP_NORM,
+        'scheduler': 'warmup_cosine' if USE_WARMUP_SCHEDULER else 'reduce_on_plateau',
+        'loss_function': LOSS_FUNCTION
     }
     pd.DataFrame([summary]).to_csv(str(RESULTS_FOLDER / "model_summary.csv"), index=False)
     
